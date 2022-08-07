@@ -3,7 +3,7 @@
 # Copyright (C) 2020-2021 Peter Willis
 
 set -e -u -o pipefail
-[ "${DEBUG:-0}" = "1" ] && set -x       # set DEBUG=1 to enable tracing
+[ "${TRACE:-0}" = "1" ] && set -x       # set TRACE=1 to enable tracing
 VERSION="0.12"
 
 # ---------------------------------------------------------------------------------------- #
@@ -18,8 +18,11 @@ _usage () {
   TFVARS or COMMANDs.
 
     -f FILE         A file passed to Terraform's -var-file option.
+                    Defaults to 'terraform.sh.tfvars' and 'terraform.sh.tfvars.json'
+                    if not provided.
                       ( config: VARFILES= )
     -b FILE         A file passed to Terraform's -backend-config option.
+                    Defaults to 'backend.sh.tfvars' if not provided.
                       ( config: BACKENDVARFILES= )
     -C DIR          Change to directory DIR.
                       ( config: CD_DIR= )
@@ -40,6 +43,8 @@ _usage () {
                       ( config: NO_CLEANUP_TMP=1 )
     -v              Verbose mode.
                       ( config: DEBUG=1 )
+    -t              Trace mode.
+                      ( config: TRACE=1 )
     -h              This help screen.
 
 # Commands
@@ -95,6 +100,14 @@ declare -a WRAPPER_COMMANDS=(plan_destroy shell clean clean_modules approve aws_
 # ---------------------------------------------------------------------------------------- #
 # ------------------           functions                       --------------------------- #
 
+# Function that might show a message, depending on the msg level and the debug/trace mode
+# Expected params are: level, msg
+_echo () {
+    if [[ "$1" != "Debug" && "$1" != "Trace" ]] || [[ "${DEBUG:-0}" -gt 0 ]] ; then
+        echo "$0: $1: $2" 1>&2
+    fi
+}
+
 _cmd_plan () {
     [ "${NO_DEP_CMDS:-0}" = "0" ] && _cmd_validate
     declare -a args=("$@")
@@ -109,11 +122,11 @@ _cmd_apply () {
     [ ! -e errored.tfstate ] || errored=1 # Ignore pre-existing errored.tfstate
     if ! _runcmd "$TERRAFORM" apply "${APPLY_ARGS[@]}" "${args[@]}" ; then
         if [ "${PUSH_ERRORED_TFSTATE:-1}" -eq 1 ] && [ $errored -eq 0 ] && [ -e errored.tfstate ] ; then
-            echo "$0: Warning: found 'errored.tfstate' after running 'apply'; attempting to push unapplied state file..."
+            _echo "Warning" "found 'errored.tfstate' after running 'apply'; attempting to push unapplied state file..."
             if _cmd_state push errored.tfstate ; then
                 rm -f errored.tfstate
             else
-                echo "$0: Error: could not push errored.tfstate!" ; exit 1
+                _echo "Error" "could not push errored.tfstate!" ; exit 1
             fi
         fi
     else
@@ -255,9 +268,9 @@ _cmd_shell () {
     ret=0
     if [ "${NO_DEP_CMDS:-0}" = "0" ] && ! _cmd_get ; then
         ret=$?
-        echo "$0: Previous command failed!"
+        _echo "Warning" "Previous command failed!"
     fi
-    echo "$0: Dropping into shell; see TF_DATA_DIR variable for temp files"
+    _echo "Info" "Dropping into shell; see TF_DATA_DIR variable for temp files"
     _runcmd bash -i -l
     return $?
 }
@@ -277,9 +290,9 @@ _cmd_approve () {
     echo ""
     read -p "$0: Are you SURE you want to continue with the next commands? Type 'YES' to continue: " approve
     if [ "$approve" = "YES" ] ; then
-        echo "$0: Approval given; continuing!" ; echo ""
+        _echo "Info" "Approval given; continuing!" ; echo ""
     else
-        echo "$0: Approval not given; exiting!" ; exit 1
+        _echo "Info" "Approval not given; exiting!" ; exit 1
     fi
 }
 # This function is used to bootstrap a new AWS remote state file.
@@ -293,42 +306,47 @@ _cmd_aws_bootstrap () {
 
     # Look though the backend var files for the backend bucket and dynamodb_table
     for varfile in "${BACKENDVARFILES[@]}" ; do
+        _echo "Debug" "Searching for S3 Bucket and Dynamodb settings from $varfile ..."
         TF_BACKEND_BUCKET="${TF_BACKEND_BUCKET:-$( grep -e "^[[:space:]]*bucket[[:space:]]\+=" < "$varfile" | sed -E 's/^[[:space:]]*bucket[[:space:]]+=[[:space:]]*//; s/^"//g; s/"$//g' )}"
         TF_BACKEND_TABLE="${TF_BACKEND_TABLE:-$( grep -e "^[[:space:]]*dynamodb_table[[:space:]]\+=" < "$varfile" | sed -E 's/^[[:space:]]*dynamodb_table[[:space:]]+=[[:space:]]*//; s/^"//g; s/"$//g' )}"
     done
 
     if [ -z "${TF_BACKEND_BUCKET:-}" ] || [ -z "${TF_BACKEND_TABLE:-}" ] ; then
-        echo "$0: Error: Make sure 'bucket' and 'dynamodb_table' are set in your backend var files"
+        _echo "Error" "Make sure 'bucket' and 'dynamodb_table' are set in your backend var files"
         exit 1
     fi
 
-    # Create a local terraform backend
+    _echo "Debug" "Found S3 Bucket: $TF_BACKEND_BUCKET ..."
+    _echo "Debug" "Found DynamoDB Table: $TF_BACKEND_TABLE ..."
+
+    _echo "Debug" "Create a local terraform backend ..."
     printf "terraform {\n\tbackend local {}\n}\n" > terraformsh-backend.tf
 
-    # First remove any existing previous local state
+    _echo "Debug" "First remove any existing previous local state ..."
     _cmd_clean
-    # Initialize local state
+
+    _echo "Debug" "Initialize local state ..."
     _cmd_init
 
-    # Attempt to import bucket if it exists
+    _echo "Debug" "Attempt to import bucket if it exists ..."
     bucket_region="$(aws s3api get-bucket-location \
         --bucket "${TF_BACKEND_BUCKET}" --query LocationConstraint --output text \
         || true )"
     if [ -n "$bucket_region" ] ; then
-        echo "$0: Info: importing existing S3 bucket '$TF_BACKEND_BUCKET' ..." 1>&2
+        _echo "Info" "importing existing S3 bucket '$TF_BACKEND_BUCKET' ..."
         _runcmd "$TERRAFORM" import "${IMPORT_ARGS[@]}" "${VARFILE_ARG[@]}" aws_s3_bucket.terraform_state "$TF_BACKEND_BUCKET"
     else
-        echo "$0: Info: Did not find existing S3 bucket '$TF_BACKEND_BUCKET'; creating..." 1>&2
+        _echo "Info" "Did not find existing S3 bucket '$TF_BACKEND_BUCKET'; creating..."
     fi
 
-    # Attempt to import dynamodb table if it exists
+    _echo "Debug" "Attempt to import dynamodb table if it exists"
     # TODO: replace 'jq' here with a --query in the AWS CLI
     DYNAMODB_TABLE="$( aws dynamodb list-tables | jq -re "select(.TableNames | index(\"$TF_BACKEND_TABLE\")) | .TableNames[]" || true )"
     if [ -n "$DYNAMODB_TABLE" ] ; then
-        echo "$0: Info: importing existing DynamoDB table '$TF_BACKEND_TABLE' ..." 1>&2
+        _echo "Info" "importing existing DynamoDB table '$TF_BACKEND_TABLE' ..."
         _runcmd "$TERRAFORM" import "${IMPORT_ARGS[@]}" "${VARFILE_ARG[@]}" aws_dynamodb_table.terraform_lock "$TF_BACKEND_TABLE" || true
     else
-        echo "$0: Info: Did not find backend table '$TF_BACKEND_TABLE'; creating..." 1>&2
+        _echo "Info" "Did not find backend table '$TF_BACKEND_TABLE'; creating..."
     fi
 
     # Plan & Apply to create the dynamodb table and s3 bucket
@@ -341,7 +359,7 @@ _cmd_aws_bootstrap () {
     # Create an s3 terraform backend
     printf "terraform {\n\tbackend s3 {}\n}\n" > terraformsh-backend.tf
 
-    echo "$0: Sleeping 60 seconds before querying bucket again ..." 1>&2
+    _echo "Info" "Sleeping 60 seconds before querying bucket again ..."
     sleep 60
 
     _runcmd "$TERRAFORM" init "${INIT_ARGS[@]}" "${BACKENDVARFILE_ARG[@]}"
@@ -349,10 +367,10 @@ _cmd_aws_bootstrap () {
 
 _cleanup_tmp () {
     if [ "${NO_CLEANUP_TMP_ON_ERROR:-0}" = "1" ] ; then
-        echo "$0: Error detected; not removing '${TF_TMPDIR:-}'"
+        _echo "Error" "Error detected; not removing '${TF_TMPDIR:-}'"
     else
         if [ "${NO_CLEANUP_TMP:-0}" = "1" ] ; then
-            echo "$0: Not removing temporary TF_DATA_DIR '${TF_TMPDIR:-}'"
+            _echo "Info" "Not removing temporary TF_DATA_DIR '${TF_TMPDIR:-}'"
         elif [ -n "${TF_TMPDIR:-}" ] ; then
             rm -rf "$TF_TMPDIR"
         fi
@@ -362,7 +380,7 @@ _tf_ver () {
     local tf_ver
     tf_ver="$($TERRAFORM --version | grep '^Terraform v' | cut -d 'v' -f 2)"
     if [ $? -ne 0 ] ; then
-        echo "$0: Error: 'terraform --version' failed?" 1>&2
+        _echo "Error" "'terraform --version' failed?"
         return 1
     fi
     IFS=. read -r -a tfver_a <<< "${tf_ver}"
@@ -379,7 +397,7 @@ _tf_set_datadir () {
     fi
     if [ -z "${TF_DATA_DIR:-}" ] ; then
         if [ -n "${TF_TMPDIR:-}" ] ; then
-            echo "$0: Warning: A 'TF_TMPDIR' environment variable is already set! Are you running inside a 'terraform shell' session? You might want to exit your shell before running terraformsh again"
+            _echo "Warning" "A 'TF_TMPDIR' environment variable is already set! Are you running inside a 'terraform shell' session? You might want to exit your shell before running terraformsh again"
         fi
         _cleanup_tmp
         export TF_TMPDIR="${TMPDIR:-/tmp}/tfsh.$TF_DD_UNIQUE_NAME"
@@ -449,35 +467,58 @@ _final_vars () {
     TF_DESTROY_PLANFILE="${TF_DESTROY_PLANFILE:-${TERRAFORM_PWD}/tf-destroy.$TF_DD_UNIQUE_NAME.plan}"
     TF_BOOTSTRAP_PLANFILE="${TF_BOOTSTRAP_PLANFILE:-${TERRAFORM_PWD}/tf-bootstrap.$TF_DD_UNIQUE_NAME.plan}"
 
-    if [ ${#BACKENDVARFILE_ARG[@]} -lt 1 ] ; then
-        echo "$0: Warning: No -b option passed! Potentially using only local state." 1>&2
+    # If there are some BackedVarFiles provided, try to use it
+    if [ ${#BACKENDVARFILE_ARG[@]} -ge 1 ] ; then
+        INIT_ARGS+=("${BACKENDVARFILE_ARG[@]}")
+    # Else if there are no -backend-config arguments passed as INIT_ARGS, show a warning
+    elif [[ ! "${INIT_ARGS[*]}" =~ "-backend-config" ]]; then
+        _echo "Warning" "No -b option passed nor -backend-config settings detected! Potentially using only local state."
         echo "" 1>&2
         sleep 1
-    else
-        INIT_ARGS+=("${BACKENDVARFILE_ARG[@]}")
     fi
 }
+# This function either load all the default terraformsh config
+# files found, or only the one passed by the user.
 _load_conf () {
-    # Don't load the default configs if one was passed via '-c'
-    if [ ${#CONF_FILE[@]} -lt 1 ] ; then
-        for f in "/etc/terraformsh" ~/.terraformshrc "./.terraformshrc" "terraformsh.conf" ; do
-            [ -e "$f" ] && . "$(_readlinkf "$f")"
+    # Try to load the default config files if no custom config file was passed via '-c'.
+    if [ ${#CONF_FILE[@]} -eq 0 ] ; then
+        for f in "/etc/terraformsh" ~/.terraformshrc "./.terraformshrc" "terraformsh.conf"; do
+            _echo "Debug" "Searching for default terraformsh config file $f ..."
+            if [ -e "$f" ] ; then
+                _echo "Debug" "Loading default terraformsh config bash file $f ..."
+                . "$(_readlinkf "$f")"
+            fi
         done
     # If '-c' was passed, let the user pass only the configs they want to load.
-    elif [ ${#CONF_FILE[@]} -gt 0 ] ; then
+    elif [ ${#CONF_FILE[@]} -ge 1 ] ; then
         for conf in "${CONF_FILE[@]}" ; do
             # NOTE: This is not a replacement for 'readlink -f'; if you want
             # that behavior, pass the real file path yourself, don't rely on this.
+            _echo "Debug" "Loading custom terraformsh config bash file $conf ..."
             . "$(_readlinkf "$conf")"
         done
     fi
     return 0
 }
+# This function extracts the list of files matching the expected patterns in the parents
+# folders and append them to the list of files to load.
 _load_parent_tffiles () {
     if [ "${INHERIT_TFFILES:-0}" = "1" ] ; then
-        while read -r LINE ; do VARFILES=("$LINE" "${VARFILES[@]}") ; done < <( _rfindfiles "$TF_AUTO_CONFIG_FILE" )
-        while read -r LINE ; do VARFILES=("$LINE" "${VARFILES[@]}") ; done < <( _rfindfiles "$TF_AUTO_CONFIG_FILE.json" )
-        while read -r LINE ; do BACKENDVARFILES=("$LINE" "${BACKENDVARFILES[@]}") ; done < <( _rfindfiles "$TF_BACKEND_AUTO_CONFIG_FILE" )
+        _echo "Debug" "Searching for VarFiles $TF_AUTO_CONFIG_FILE files in current and parent folders ..."
+        while read -r LINE ; do
+            _echo "Debug" "Found VarFiles file $LINE."
+            VARFILES=("$LINE" "${VARFILES[@]}")
+        done < <( _rfindfiles "$TF_AUTO_CONFIG_FILE" )
+        _echo "Debug" "Searching for VarFiles (JSON) $TF_AUTO_CONFIG_FILE.json files in current and parent folders ..."
+        while read -r LINE ; do
+            _echo "Debug" "Found VarFiles file (JSON) $LINE."
+            VARFILES=("$LINE" "${VARFILES[@]}")
+        done < <( _rfindfiles "$TF_AUTO_CONFIG_FILE.json" )
+        _echo "Debug" "Searching for BackendVarFiles $TF_BACKEND_AUTO_CONFIG_FILE files in current and parent folders ..."
+        while read -r LINE ; do
+            _echo "Debug" "Found BackendVarFile file $LINE."
+            BACKENDVARFILES=("$LINE" "${BACKENDVARFILES[@]}")
+        done < <( _rfindfiles "$TF_BACKEND_AUTO_CONFIG_FILE" )
     fi
 }
 # This function takes an array and processes it for arguments from the Terraformsh
@@ -494,12 +535,16 @@ _process_cmds () {
         if    [ ! "$(expr "$cmd" : ".*\.backend\.tfvars$")" = "0" ] \
               || [ ! "$(expr "$cmd" : ".*\.backend\.sh\.tfvars$")" = "0" ] \
               || [ ! "$(expr "$cmd" : ".*\.backend$")" = "0" ]
-        then  BACKENDVARFILES+=("$(_readlinkf "$cmd")")
+        then
+            _echo "Debug" "We will try to use the Backend file $cmd ..."
+            BACKENDVARFILES+=("$(_readlinkf "$cmd")")
         elif  [ "$(expr "$cmd" : ".*\.tfvars$")" -ne 0 ] \
               || [ "$(expr "$cmd" : ".*\.sh\.tfvars$")" -ne 0 ] \
               || [ "$(expr "$cmd" : ".*\.tfvars\.json$")" -ne 0 ] \
               || [ "$(expr "$cmd" : ".*\.sh\.tfvars\.json$")" -ne 0 ]
-        then  VARFILES+=("$(_readlinkf "$cmd")")
+        then
+            _echo "Debug" "We will try to use the TFVAR file $cmd ..."
+            VARFILES+=("$(_readlinkf "$cmd")")
         else  break
         fi
         s=$((s+1))
@@ -528,16 +573,16 @@ _process_cmds () {
         done
         if [ $valid_cmd -eq 0 ] || [ $valid_cmd -eq 2 ] ; then
             if [ $found_cmds -lt 1 ] ; then
-                echo "$0: Error: Found non-command '$cmd' before a command was found" ; exit 1
+                _echo "Error" "Found non-command '$cmd' before a command was found" ; exit 1
             fi
             [ $valid_cmd -eq 0 ] && \
-                echo "$0: Warning: '$cmd' is not a valid command; passing as an option instead" 1>&2
+                _echo "Warning" "'$cmd' is not a valid command; passing as an option instead"
             [ $valid_cmd -eq 2 ] && \
-                echo "$0: Warning: '$cmd' is a subcommand of previous command '$prevcmd'; passing as an option" 1>&2
+                _echo "Warning" "'$cmd' is a subcommand of previous command '$prevcmd'; passing as an option"
             CMD_PAIRS[$p]+=" $(printf "%q" "$cmd")" # The space before \$( is intentional
             prev="opt"
         else
-            echo "$0: Info: Found terraform command '$cmd'" 1>&2
+            _echo "Info" "Found terraform command '$cmd'"
             CMD_PAIRS[$p]="array=($(printf "%q" "$cmd")" # Yes this has a leading '('
             found_cmds=$((found_cmds+1))
             prev="cmd"
@@ -548,15 +593,17 @@ _process_cmds () {
         CMD_PAIRS[$p]+=")"
     done
     if [ $(( ${#cmds[@]} - $s )) -lt 1 ] ; then
-        echo "$0: Error: No COMMAND was specified"; echo ""; _usage
+        _echo "Error" "No COMMAND was specified"; echo ""; _usage
     fi
 }
 _dirchange () {
     if [ -n "${CD_DIR:-}" ] ; then
+        _echo "Debug" "Changing working directory to $CD_DIR ..."
         printf "+ cd \"%s\"\n" "$CD_DIR" 1>&2
         cd "$CD_DIR"
     fi
 }
+# This function reads the content from a list of files
 _readlinkf () {
     [ "${1:-}" ] || return 1; m_s=40; CDPATH=''; t=$1; [ -e "${t%/}" ] || t=${1%"${1##*[!/]}"}
     [ -d "${t:-/}" ] && t="$t/"; cd -P . 2>/dev/null || return 1;
@@ -569,11 +616,16 @@ _readlinkf () {
       link=$(ls -dl -- "$t" 2>/dev/null) || break; t=${link#*" $t -> "}
     done; return 1
 }
+# This function takes a file name as argument and search in the current and parents
+# folders and return the full path of any file matching this name.
 _rfindfiles () {
     local file="$1"
     cwd="$(pwd)"
     while [ ! "$(dirname "$cwd")" = "/" ] ; do
-        [ ! -e "$cwd/$file" ] || printf "%s\n" "$cwd/$file"
+        if [ -e "$cwd/$file" ] ; then
+            _echo "Debug" "Found file $cwd/$file ..."
+            printf "%s\n" "$cwd/$file"
+        fi
         cwd="$(dirname "$cwd")"
     done
 }
@@ -609,8 +661,9 @@ while getopts "f:b:C:c:E:IPDNnhv" args ; do
         n)  NO_CLEANUP_TMP=1 ;;
         h)  SHOW_HELP=1 ;;
         v)  export DEBUG=1 ;;
+        t)  export TRACE=1 ;;
         *)
-            echo "$0: Error: unknown option $args" ; exit 1 ;;
+            _echo "Error" "unknown option $args" ; exit 1 ;;
     esac
 done
 shift $(($OPTIND-1))
@@ -620,7 +673,7 @@ shift $(($OPTIND-1))
 # ---------------------------------------------------------------------------------------- #
 # --------------------         run the commands            ------------------------------- #
 
-[ "${DEBUG:-0}" = "1" ] && set -x
+[ "${TRACE:-0}" = "1" ] && set -x
 
 _load_parent_tffiles
 _load_conf
