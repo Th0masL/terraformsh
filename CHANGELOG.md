@@ -1,6 +1,6 @@
 # Changelog
 
-## [v0.13] - 2022-08-07
+## [v0.12.1] - 2022-08-07
 
 ### Added
  - Comments to describe functions/script behavior
