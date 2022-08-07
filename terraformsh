@@ -647,7 +647,7 @@ declare -a CMDS=() CMD_PAIRS=() CONF_FILE=()
 
 _default_vars
 
-while getopts "f:b:C:c:E:IPDNnhv" args ; do
+while getopts "f:b:C:c:E:IPDNnhvt" args ; do
     case $args in
         f)  VARFILES+=("$(_readlinkf "$OPTARG")") ;;
         b)  BACKENDVARFILES+=("$(_readlinkf "$OPTARG")") ;;
