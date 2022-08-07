@@ -482,13 +482,19 @@ _final_vars () {
 _load_conf () {
     # Try to load the default config files if no custom config file was passed via '-c'.
     if [ ${#CONF_FILE[@]} -eq 0 ] ; then
-        for f in "/etc/terraformsh" ~/.terraformshrc "./.terraformshrc" "terraformsh.conf"; do
+        for f in "/etc/terraformsh" ~/.terraformshrc "./.terraformshrc"; do
             _echo "Debug" "Searching for default terraformsh config file $f ..."
             if [ -e "$f" ] ; then
                 _echo "Debug" "Loading default terraformsh config bash file $f ..."
                 . "$(_readlinkf "$f")"
             fi
         done
+        _echo "Debug" "Searching for terraformsh.conf config files in current and parent folders ..."
+        while read -r LINE ; do
+            _echo "Debug" "Loading first/best match for terraformsh.conf bash file: $LINE ..."
+            . "$(_readlinkf "$LINE")"
+            break # Exit the loop so we do not load any other terraformsh.conf files, because we only want to load the best match
+        done < <( _rfindfiles "terraformsh.conf" )
     # If '-c' was passed, let the user pass only the configs they want to load.
     elif [ ${#CONF_FILE[@]} -ge 1 ] ; then
         for conf in "${CONF_FILE[@]}" ; do
