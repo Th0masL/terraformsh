@@ -1,10 +1,25 @@
 # Changelog
 
+## [v0.13] - 2022-08-07
+
+### Added
+ - Comments to describe functions/script behavior
+ - Allow using terraformsh.conf file from either current or parent folders
+
+### Changed
+ - Rename existing 'DEBUG' mode to 'TRACE'
+ - New 'DEBUG' messages are more precise but less verbose
+
+### Fixed
+ - Invalid sed parameter for MacOS
+
+---
+
 ## [v0.12] - 2022-01-31
 
 ### Added
  - Option '-n' (NO_CLEANUP_TMP=1) prevents removing the dynamic TF_DATA_DIR
- - Wrappers for most Terraform commands (workspace, console, output, taint, 
+ - Wrappers for most Terraform commands (workspace, console, output, taint,
    untaint, force-unlock)
  - '-backup=' option added to 'terraformsh state rm ...' commands
 
@@ -47,7 +62,7 @@
 ### Added
  - Handlers for 0.12upgrade and 0.13upgrade commands
  - Allow overriding `TF_BACKEND_AUTO_CONFIG_FILE` and `TF_AUTO_CONFIG_FILE`
-  
+
 ### Changed
  - Before, '-reconfigure -force-copy' was always passed to 'terraform init'.
    Now it can now be overridden in `INIT_ARGS` .
