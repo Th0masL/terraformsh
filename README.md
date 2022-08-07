@@ -4,7 +4,7 @@
  - AWS CLI (only for aws_bootstrap command)
 
 # About
-  Terraformsh is a Bash script that makes it easier to run Terraform by 
+  Terraformsh is a Bash script that makes it easier to run Terraform by
   performing common steps for you. It also makes it easy to keep your
   configuration DRY and deploy infrastructure based on a directory
   hierarchy of environments. See [DRY_CODE.md](./DRY_CODE.md) for
@@ -15,7 +15,7 @@
   for more details.
 
   Terraformsh will detect and use Terraform `-var-files` and `-backend-config`
-  configuration files across a directory hierarchy. It also has its own 
+  configuration files across a directory hierarchy. It also has its own
   configuration file so you don't have to remember any command other than
   `terraformsh` itself (removing the need for a `Makefile`, though you can
   still use one if you want).
@@ -96,7 +96,7 @@
             plan approve apply
 
 
-  To make this even simpler, if you pass any argument to Terraformsh after the 
+  To make this even simpler, if you pass any argument to Terraformsh after the
   initial *OPTIONS*, and they match *TFVARS* ('\*.backend.tfvars', '\*.backend.sh.tfvars',
   '\*.tfvars.json', '\*.tfvars', '\*.sh.tfvars.json', '\*.sh.tfvars'), they will
   be automatically loaded with the `-f` and `-b` options.
@@ -149,7 +149,8 @@
   `/etc/terraformsh`, `~/.terraformshrc`, `.terraformshrc`, `terraformsh.conf`),
   or set them as environment variables before you call Terraformsh:
 
-    DEBUG=1                     # Enable bash tracing
+    TRACE=1                     # Enable bash tracing
+    DEBUG=1                     # Enable bash debuging
     TERRAFORM=terraform         # The name of the terraform executable
     TF_PLANFILE=                # Automatically populated by terraformsh
     TF_DESTROY_PLANFILE=        # Automatically populated by terraformsh
@@ -160,7 +161,7 @@
     NO_DEP_CMDS=1               # Don't run dependent commands automatically
     NO_CLEANUP_TMP=1            # Don't clean up temporary TF_DATA_DIR
     DRYRUN=1                    # Enable dry-run mode
-    CD_DIR=             # The directory to change to before running terraform commands
+    CD_DIR=                     # The directory to change to before running terraform commands
 
   The environment variable `TF_DATA_DIR` is automatically overridden by Terraformsh.
   A new temporary directory is created for the data dir, based on *both* the name of
@@ -273,14 +274,14 @@
 ### Having trouble?
 
  - **Problem: I'm using Terraformsh from two different shell sessions, in the same directory, running the same commands, but one of them is working and the other isn't. What's going on?**
-   
+
    *Solution:* Something's wrong with your environment variables in one of the sessions. If both `TF_DATA_DIR` and `TF_TMPDIR` are set to something starting with `/tmp/tfsh.`, then you probably used `terraformsh shell` and forgot to *exit*.
 
 
 ---
 
 
-    terraformsh v0.12
+    terraformsh v0.12.1
     Usage: ./terraformsh [OPTIONS] [TFVARS] COMMAND [..]
 
 # Options
@@ -289,15 +290,18 @@
   TFVARS or COMMANDs.
 
     -f FILE         A file passed to Terraform's -var-file option.
+                    Defaults to 'terraform.sh.tfvars' and 'terraform.sh.tfvars.json'
+                    if not provided.
                       ( config: VARFILES= )
     -b FILE         A file passed to Terraform's -backend-config option.
+                    Defaults to 'backend.sh.tfvars' if not provided.
                       ( config: BACKENDVARFILES= )
     -C DIR          Change to directory DIR.
                       ( config: CD_DIR= )
     -c file         Specify a '.terraformshrc' configuration file to load.
     -E EXPR         Evaluate an expression in bash ('eval EXPR').
     -I              Disables automatically loading any 'terraform.sh.tfvars',
-                    'terraform.sh.tfvars.json', or 'backend.sh.tfvars' files 
+                    'terraform.sh.tfvars.json', or 'backend.sh.tfvars' files
                     found while recursively searching parent directories.
                       ( config: INHERIT_TFFILES=0 )
     -P              Do not use '.plan' files for plan/apply/destroy commands.
@@ -311,6 +315,8 @@
                       ( config: NO_CLEANUP_TMP=1 )
     -v              Verbose mode.
                       ( config: DEBUG=1 )
+    -t              Trace mode.
+                      ( config: TRACE=1 )
     -h              This help screen.
 
 # Commands
